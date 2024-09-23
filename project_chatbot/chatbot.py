@@ -27,7 +27,7 @@ def interact_with_chatbot(user_in, conv_history, tokenizer, model):
     return response_text
 
 def delete_model_files():
-    cache_dir = os.path.expanduser("C:\Users\samar\.cache\huggingface\hub\models--facebook--blenderbot-400M-distill")
+    cache_dir = os.path.expanduser("~\.cache\huggingface\hub\models--facebook--blenderbot-400M-distill")
     if os.path.exists(cache_dir):
         user_in = input("Do you want to delete the model files stored in cache dir? (y/n): ")
         if user_in.lower() == 'y':
