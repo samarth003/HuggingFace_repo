@@ -3,8 +3,13 @@ from transformers import BlenderbotTokenizer, BlenderbotForConditionalGeneration
 MODEL_NAME = "facebook/blenderbot-400M-distill"
 
 class base_model():
+
+    def __init__(self):
+        self.model_hf = MODEL_NAME
+
     def model_init(self, model_name = MODEL_NAME):
         #load pre-trained model and tokenizer
+        model_name = self.model_hf
         tokenizer = BlenderbotTokenizer.from_pretrained(model_name)
         model = BlenderbotForConditionalGeneration.from_pretrained(model_name)
         return tokenizer, model
