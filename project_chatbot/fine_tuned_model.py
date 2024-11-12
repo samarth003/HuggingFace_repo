@@ -1,4 +1,4 @@
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import Trainer, TrainingArguments
 from transformers import BatchEncoding
@@ -24,66 +24,16 @@ class peft_model(base_model):
 
     def model_config(self):
         self.tokenizer_base, self.model_base = self.model_init()
-        # print(model_base)
-        # peft_cfg = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
-        # model_peft = get_peft_model(model=model_base, peft_config=peft_cfg)
-        # model_peft.print_trainable_parameters()
-
-        # def tokenize_in(examples):
-        #     if "conversation" in examples:
-        #         conversation_data = examples["conversation"]
-
-        #         # Print out the structure of conversation_data
-        #         # print(f"Conversation data: {conversation_data}")
-
-        #         if isinstance(conversation_data, list):
-        #             conversations = []
-
-        #             # Loop through each turn in the conversation
-        #             for turn_list in conversation_data:
-        #                 if isinstance(turn_list, list):
-        #                     # Loop through each turn within the list
-        #                     for turn in turn_list:
-        #                         if isinstance(turn, dict) and "content" in turn:
-        #                             # Extract the content if it exists
-        #                             conversations.append(turn["content"])
-        #                         else:
-        #                             # Handle unexpected structures
-        #                             print(f"Unexpected format in conversation turn: {turn}")
-        #                 elif isinstance(turn_list, dict) and "content" in turn_list:
-        #                     # Handle case where conversation_data is a list of dicts directly
-        #                     conversations.append(turn_list["content"])
-        #                 else:
-        #                     print(f"Unexpected format in conversation turn list: {turn_list}")
-
-        #             # Check if conversations list is empty before tokenizing
-        #             if not conversations:
-        #                 print(f"No valid content found in the examples: {examples}")
-        #                 return {}  # Return None or some default value to prevent an error
-
-        #             # Tokenize the conversation texts
-        #             return self.tokenizer_base(conversations, padding="max_length", truncation=True, max_length=128)
-        #         else:
-        #             print(f"Unexpected type for 'conversation': {type(conversation_data)}")
-        #     else:
-        #         print(f"'conversation' key not found in examples: {examples}")
-
-        #     return {}
-
         def tokenize_in(examples):
             if "conversation" in examples:
                 conversation_data = examples["conversation"]
 
                 if isinstance(conversation_data, list):
                     conversations = []
-
-                    # Extract content from nested lists of dictionaries
                     for turn_list in conversation_data:
                         if isinstance(turn_list, list):
-                            for turn in turn_list:
-                                if isinstance(turn, dict) and "content" in turn:
-                                    # print(turn["content"])
-                                    conversations.append(turn["content"])
+                            turns_content = " ".join(turn.get("content", "") for turn in turn_list if isinstance(turn, dict))
+                            conversations.append(turns_content)
 
                     if not conversations:
                         print(f"No valid content found in the examples: {examples}")
@@ -95,30 +45,14 @@ class peft_model(base_model):
                         conversations,
                         padding="max_length",
                         truncation=True,
-                        max_length=max_length,
-                        return_tensors="np"  # Use Numpy for easier post-processing
+                        max_length=max_length
                     )
 
                     # Ensure that input_ids and attention_mask are consistently padded
                     input_ids = tokenized_output["input_ids"]
                     attention_mask = tokenized_output["attention_mask"]
 
-                    # Convert to lists and make sure they are of consistent length
-                    input_ids = input_ids.tolist()
-                    attention_mask = attention_mask.tolist()
-
-                    # for ids in input_ids:
-                    #     print(len(ids))
-
-                    # Debug: Check that all input_ids are of the same length (max_length)
-                    if not all(len(ids) == max_length for ids in input_ids):
-                        print(f"Inconsistent lengths detected in input_ids: {input_ids}")
-                        return {"input_ids": [], "attention_mask": []}
-
-                    return {
-                        "input_ids": input_ids,
-                        "attention_mask": attention_mask
-                    }
+                    return tokenized_output
                 else:
                     print(f"Unexpected type for 'conversation': {type(conversation_data)}")
             else:
@@ -133,18 +67,22 @@ class peft_model(base_model):
                                                  'language', 'openai_moderation', 'detoxify_moderation', 
                                                  'toxic', 'redacted'
                                                  ])
-            wildchat_db = db.map(tokenize_in, 
+            self.wildchat_db = db.map(tokenize_in, 
                                  batched=True, 
                                  batch_size=32,
                                 )
 
         except Exception as e:
-            print(f"Error during babtch processing: {e}")
+            print(f"Error during batch processing: {e}")
             raise
-        self.wildchat_train_db = wildchat_db["train"]
-        self.wildchat_test_db = wildchat_db["test"]
+        #test train split required
+        self.wildchat_db.save_to_disk("test_trainer/mapped_db")
 
     def model_train(self):
+        self.wildchat_db = load_from_disk("test_trainer/mapped_db") 
+        wildchat_db_split = self.wildchat_db.train_test_split(test_size=0.2, shuffle=True)
+        self.wildchat_train_db = wildchat_db_split["train"]
+        self.wildchat_test_db = wildchat_db_split["test"]
         training_args = TrainingArguments(output_dir="test_trainer/chatbot_ft", 
                                           learning_rate=1e-3,
                                           eval_strategy="epoch", 
