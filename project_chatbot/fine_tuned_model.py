@@ -7,6 +7,7 @@ import numpy as np
 from base_model import base_model
 
 DATASET_NAME = "allenai/WildChat"
+DATABASE_MAPPED = False
 
 class peft_model(base_model):
 
@@ -22,67 +23,84 @@ class peft_model(base_model):
         # print(dataset["train"][0])
         return dataset
 
-    def model_config(self):
+    def model_tokenize(self):
         self.tokenizer_base, self.model_base = self.model_init()
-        def tokenize_in(examples):
-            if "conversation" in examples:
-                conversation_data = examples["conversation"]
+        if DATABASE_MAPPED != True:
+            def tokenize_in(examples):
+                if "conversation" in examples:
+                    conversation_data = examples["conversation"]
 
-                if isinstance(conversation_data, list):
-                    conversations = []
-                    for turn_list in conversation_data:
-                        if isinstance(turn_list, list):
-                            turns_content = " ".join(turn.get("content", "") for turn in turn_list if isinstance(turn, dict))
-                            conversations.append(turns_content)
+                    if isinstance(conversation_data, list):
+                        conversations = []
+                        for turn_list in conversation_data:
+                            if isinstance(turn_list, list):
+                                turns_content = " ".join(turn.get("content", "") for turn in turn_list if isinstance(turn, dict))
+                                conversations.append(turns_content)
 
-                    if not conversations:
-                        print(f"No valid content found in the examples: {examples}")
-                        return {"input_ids": [], "attention_mask": []}
+                        if not conversations:
+                            print(f"No valid content found in the examples: {examples}")
+                            return {"input_ids": [], "attention_mask": [], 
+                                    "decoder_input_ids": [], "labels": []}
 
-                    # Tokenize with fixed max_length to ensure consistent output length
-                    max_length = 32  # Set the maximum length you want for padding/truncation
-                    tokenized_output = self.tokenizer_base(
-                        conversations,
-                        padding="max_length",
-                        truncation=True,
-                        max_length=max_length
-                    )
+                        # Tokenize with fixed max_length to ensure consistent output length
+                        max_length = 32  # Set the maximum length you want for padding/truncation
+                        tokenize_examples = self.tokenizer_base(
+                            conversations,
+                            padding="max_length",
+                            truncation=True,
+                            max_length=max_length
+                        )
+                        input_ids = tokenize_examples["input_ids"]
+                        attention_mask = tokenize_examples["attention_mask"]
+                        decoder_input_ids = [
+                            [self.tokenizer_base.pad_token_id] + ids[:-1] for ids in input_ids
+                        ]
+                        labels = input_ids.copy()
 
-                    # Ensure that input_ids and attention_mask are consistently padded
-                    input_ids = tokenized_output["input_ids"]
-                    attention_mask = tokenized_output["attention_mask"]
-
-                    return tokenized_output
+                        # return tokenize_examples
+                        return {
+                            "input_ids"        : input_ids,
+                            "attention_mask"   : attention_mask,
+                            "decoder_input_ids": decoder_input_ids,
+                            "labels"           : labels
+                        }
+                    else:
+                        print(f"Unexpected type for 'conversation': {type(conversation_data)}")
                 else:
-                    print(f"Unexpected type for 'conversation': {type(conversation_data)}")
-            else:
-                print(f"'conversation' key not found in examples: {examples}")
+                    print(f"'conversation' key not found in examples: {examples}")
 
-            return {"input_ids": [], "attention_mask": []}
+                return {"input_ids": [], "attention_mask": [], "decoder_input_ids": [], "labels": []}
 
-        # Use map with smaller batch size to ensure stability
-        db = self.import_dataset()
-        try:
-            db = db.remove_columns(column_names=['conversation_id', 'model', 'timestamp', 'turn', 
-                                                 'language', 'openai_moderation', 'detoxify_moderation', 
-                                                 'toxic', 'redacted'
-                                                 ])
-            self.wildchat_db = db.map(tokenize_in, 
-                                 batched=True, 
-                                 batch_size=32,
-                                )
-
-        except Exception as e:
-            print(f"Error during batch processing: {e}")
-            raise
-        #test train split required
-        self.wildchat_db.save_to_disk("test_trainer/mapped_db")
-
+            # Use map with smaller batch size to ensure stability
+            db = self.import_dataset()
+            try:
+                db = db.remove_columns(column_names=['conversation_id', 'model', 'timestamp', 'turn', 
+                                                    'language', 'openai_moderation', 'detoxify_moderation', 
+                                                    'toxic', 'redacted'
+                                                    ])
+                self.wildchat_db = db.map(tokenize_in, 
+                                    batched=True, 
+                                    batch_size=32,
+                                    )
+            except Exception as e:
+                print(f"Error during batch processing: {e}")
+                raise
+            #test train split required
+            self.wildchat_db.save_to_disk("test_trainer/mapped_db")
+        else:
+            pass
+        
     def model_train(self):
         self.wildchat_db = load_from_disk("test_trainer/mapped_db") 
-        wildchat_db_split = self.wildchat_db.train_test_split(test_size=0.2, shuffle=True)
-        self.wildchat_train_db = wildchat_db_split["train"]
-        self.wildchat_test_db = wildchat_db_split["test"]
+        wildchat_db_split = self.wildchat_db["train"].train_test_split(test_size=0.2, shuffle=True)
+        wildchat_split_db = {
+            "train": wildchat_db_split["train"],
+            "test" : wildchat_db_split["test"]
+        }
+
+        self.wildchat_train_db = wildchat_split_db["train"]
+        self.wildchat_test_db = wildchat_split_db["test"]
+
         training_args = TrainingArguments(output_dir="test_trainer/chatbot_ft", 
                                           learning_rate=1e-3,
                                           eval_strategy="epoch", 
@@ -106,8 +124,7 @@ class peft_model(base_model):
 
 if __name__ == "__main__":
     peft_m = peft_model()
-    # peft_m.import_dataset()
-    peft_m.model_config()
+    peft_m.model_tokenize()
     peft_m.model_train()
     peft_m.model_save()
     
