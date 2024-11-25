@@ -7,7 +7,7 @@ import numpy as np
 from base_model import base_model
 
 DATASET_NAME = "allenai/WildChat"
-DATABASE_MAPPED = False
+DATABASE_MAPPED = True
 
 class peft_model(base_model):
 
@@ -102,10 +102,14 @@ class peft_model(base_model):
         self.wildchat_test_db = wildchat_split_db["test"]
 
         training_args = TrainingArguments(output_dir="test_trainer/chatbot_ft", 
-                                          learning_rate=1e-3,
-                                          eval_strategy="epoch", 
-                                          save_strategy="epoch", 
-                                          load_best_model_at_end=True
+                                          learning_rate=1e-4,
+                                          eval_strategy="no", 
+                                          save_strategy="no", 
+                                          load_best_model_at_end=True,
+                                          per_device_eval_batch_size=8,
+                                          per_device_train_batch_size=8,
+                                          gradient_accumulation_steps=2,
+                                          num_train_epochs=2
                                           )
         self.model_trainer = Trainer(model=self.model_base,
                                 args=training_args, 
